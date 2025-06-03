@@ -41,6 +41,8 @@ U8G2_SSD1306_128X32_UNIVISION_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
 #define PN532_MOSI 6
 #define PN532_SS   9
 
+#define NFC_TIMEOUT 100
+
 Adafruit_PN532 nfc(PN532_SS);
 
 uint32_t nfc_version;
@@ -193,35 +195,35 @@ void debugBLEHeader() {
     size_t offset = 0;
 
     offset += snprintf(buffer + offset, sizeof(buffer) - offset,
-        "REQ: hdr: {frame_len:%u addr:%u seq_no:%u cmd:%u} ",
+        "REQ: hdr: {frame_len:0x%02X addr:0x%02X seq_no:0x%02X cmd:0x%02X} ",
         req.hdr.frame_len, req.hdr.addr, req.hdr.seq_no, req.hdr.cmd);
 
     offset += snprintf(buffer + offset, sizeof(buffer) - offset,
-        "checksum:%02X pos:%u payload_len:%u ", 
+        "checksum:0x%02X pos:0x%02X payload_len:0x%02X ", 
         req.checksum, req.pos, req.payload_len);
 
     offset += snprintf(buffer + offset, sizeof(buffer) - offset, "payload:");
     for (uint8_t i = 0; i < req.payload_len; i++) {
         offset += snprintf(buffer + offset, sizeof(buffer) - offset, 
-            "%02X ", req.payload[i]);
+            "0x%02X ", req.payload[i]);
     }
 
     offset += snprintf(buffer + offset, sizeof(buffer) - offset, "\n");
 
     offset += snprintf(buffer + offset, sizeof(buffer) - offset,
-        "RES: hdr: {frame_len:%u addr:%u seq_no:%u cmd:%u} ",
+        "RES: hdr: {frame_len:0x%02X addr:0x%02X seq_no:0x%02X cmd:0x%02X} ",
         res.hdr.frame_len, res.hdr.addr, res.hdr.seq_no, res.hdr.cmd);
 
     offset += snprintf(buffer + offset, sizeof(buffer) - offset,
-        "status:%u payload_len:%u ", 
+        "status:0x%02X payload_len:0x%02X ", 
         res.status, res.payload_len);
 
     offset += snprintf(buffer + offset, sizeof(buffer) - offset, "payload:");
     for (uint8_t i = 0; i < res.payload_len; i++) {
         offset += snprintf(buffer + offset, sizeof(buffer) - offset, 
-            "%02X ", res.payload[i]);
+            "0x%02X ", res.payload[i]);
     }
-    
+
     pLogCharacteristic->setValue(buffer);
     pLogCharacteristic->notify();
 }
@@ -230,42 +232,45 @@ void debugBLEHeader() {
 bool sg_read_frame() {
     while (Serial.available()) {
         uint8_t byte = Serial.read();
-        if (byte == 0xD0) {
-            // SG Frame: Tralling escape
-            if (!Serial.available()) break;
-            byte = (uint8_t)Serial.read() + 1;
-        }
-        // SG Frame: Bad sync
-        if (req.pos && byte == 0xE0) break;
         if (byte == 0xE0) {
+            if (req.pos) {
+                debugLog("SG Frame: Bad sync", byte);
+                goto fail;
+            }
             memset(&req, 0, sizeof(req));
             req.checksum = 0;
             req.pos = 1;
             continue;
         }
+        if (byte == 0xD0) {
+            if (!Serial.available()) {
+                debugLog("SG Frame: Tralling escape", byte);
+                goto fail;
+            }
+            byte = (uint8_t)Serial.read() + 1;
+        }
         switch (req.pos) {
-        case 1: req.hdr.frame_len = byte;
-            break;
-        case 2: req.hdr.addr = byte;
-            break;
-        case 3: req.hdr.seq_no = byte;
-            break;
-        case 4: req.hdr.cmd = byte;
-            break;
-        case 5: req.payload_len = byte;
-            break;
+        case 1: req.hdr.frame_len = byte; break;
+        case 2: req.hdr.addr = byte;      break;
+        case 3: req.hdr.seq_no = byte;    break;
+        case 4: req.hdr.cmd = byte;       break;
+        case 5: req.payload_len = byte;   break;
         default:
-            if (req.pos <= req.hdr.frame_len) {
-                req.payload[req.pos - REQ_BASE_SIZE - 1] = byte;
-            } else {
+            if (req.pos > req.hdr.frame_len + 1) {
+                debugLog("SG Frame: Length overflow", byte);
+                goto fail;
+            }
+            if (req.pos == req.hdr.frame_len + 1) {
                 req.pos = 0;
                 return byte == req.checksum;
             }
+            req.payload[req.pos - REQ_BASE_SIZE - 1] = byte;
             break;
         }
         req.checksum += byte;
         req.pos++;
     }
+fail:
     req.pos = 0;
     return false;
 }

@@ -144,7 +144,7 @@ void loop() {
       // https://community.nxp.com/t5/NFC/is-it-possible-to-turn-RF-field-on-without-pn532-going-into/m-p/464087
       case CMD_NFC_RADIO_ON: {
         uint8_t command[] = { 0x32, 0x01, 0x01 };
-        sg_res_init((uint8_t)nfc.sendCommandCheckAck(command, 3));
+        sg_res_init((uint8_t)nfc.sendCommandCheckAck(command, 3, NFC_TIMEOUT));
         draw_icon(0,32,0x008B);
         break;
       }
@@ -157,7 +157,7 @@ void loop() {
           // draw_blank(24, 32);
         }
         uint8_t command[] = { 0x32, 0x01, 0x00 };
-        sg_res_init((uint8_t)nfc.sendCommandCheckAck(command, 3));
+        sg_res_init((uint8_t)nfc.sendCommandCheckAck(command, 3, NFC_TIMEOUT));
         break;
       }
       case CMD_NFC_POLL: {
@@ -170,7 +170,7 @@ void loop() {
         uint8_t PMm[8];
         uint16_t sys_code[4] = { 0 };
         draw_icon(0,32,0x008B);
-        if (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, luid, &id_len)) {
+        if (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, luid, &id_len, NFC_TIMEOUT)) {
           uint8_t uid_len = sizeof(mifare.uid);
           mifare.type = 0x10;
           mifare.id_len = min(id_len, uid_len);
@@ -179,7 +179,7 @@ void loop() {
           memcpy(mifare.uid, luid, mifare.id_len);
           sg_res_init(sizeof(mifare));
           memcpy(res.payload, &mifare, sizeof(mifare));
-        } else if (nfc.felica_Polling(0xFFFF, 0x01, IDm, PMm, sys_code)) {
+        } else if (nfc.felica_Polling(0xFFFF, 0x01, IDm, PMm, sys_code, NFC_TIMEOUT)) {
           uint8_t idm_len = sizeof(felica.IDm);
           uint8_t pmm_len = sizeof(felica.PMm);
           felica.type = 0x20;
@@ -209,8 +209,6 @@ void loop() {
         if (nfc.inDataExchange(payload, payload[0], resp, &resp_len)) {
           sg_res_init(resp_len);
           memcpy(res.payload, &resp, sizeof(resp));
-        } else {
-          sg_res_init(0, 1);
         }
         break;
       }
