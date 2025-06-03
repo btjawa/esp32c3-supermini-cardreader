@@ -110,6 +110,7 @@ void loop() {
   }
   if (!dipsw1 && sg_read_frame()) {
     switch (req.hdr.cmd) {
+      // Version
       case CMD_GET_FW_VERSION: {
         const version_info *fw = &fw_version[dipsw2 ? 1 : 2];
         sg_res_init(fw->length);
@@ -122,29 +123,12 @@ void loop() {
         memcpy(res.payload, hw->version, hw->length);
         break;
       }
-      case CMD_TO_UPDATE_MODE: 
-        sg_res_init();
-        break;
-      case CMD_SEND_HEX_DATA:
-        sg_res_init();
-        /* Firmware checksum length? */
-        if (req.payload_len == 0x2b) {
-          /* The firmware is identical flag? */
-          res.status = 0x20;
-        }
-        break;
-      case CMD_RESET:
-        sg_res_init();
-        res.status = 3;
-        draw_blank(0, 32);
-        // draw_blank(24, 32);
-        break;
 
       // NFC/RFID
-      // https://community.nxp.com/t5/NFC/is-it-possible-to-turn-RF-field-on-without-pn532-going-into/m-p/464087
+      // https://github.com/elechouse/PN532/blob/PN532_HSU/PN532/PN532.cpp
       case CMD_NFC_RADIO_ON: {
-        uint8_t command[] = { 0x32, 0x01, 0x01 };
-        sg_res_init((uint8_t)nfc.sendCommandCheckAck(command, 3, NFC_TIMEOUT));
+        uint8_t cmd[] = { 0x32, 0x01, 0x01 };
+        sg_res_init((uint8_t)nfc.sendCommandCheckAck(cmd, sizeof(cmd), NFC_TIMEOUT));
         draw_icon(0,32,0x008B);
         break;
       }
@@ -154,10 +138,9 @@ void loop() {
           draw_icon(0, 32, 0x0073);
         } else {
           draw_blank(0, 32);
-          // draw_blank(24, 32);
         }
-        uint8_t command[] = { 0x32, 0x01, 0x00 };
-        sg_res_init((uint8_t)nfc.sendCommandCheckAck(command, 3, NFC_TIMEOUT));
+        uint8_t cmd[] = { 0x32, 0x01, 0x00 };
+        sg_res_init((uint8_t)nfc.sendCommandCheckAck(cmd, sizeof(cmd), NFC_TIMEOUT));
         break;
       }
       case CMD_NFC_POLL: {
@@ -192,18 +175,72 @@ void loop() {
         }
         break;
       }
-
-      // EXCHANGE
-      case CMD_MIFARE_READ_BLOCK: // TODO !!! IMPLEMENT THEM LATER
+      // Since UID will be sent by CMD_MIFARE_AUTHENTICATE_XXX, we dummy this cmd here
+      case CMD_MIFARE_SELECT_TAG:
+      // Unknown
+      case CMD_MIFARE_UNKNOWN:
         sg_res_init();
         break;
+
+      // Mifare
+      case CMD_MIFARE_SET_KEY_AIME:
+        sg_res_init();
+        memcpy(aime_key, res.payload, sizeof(aime_key));
+        break;
+      case CMD_MIFARE_SET_KEY_BANA:
+        sg_res_init();
+        memcpy(bana_key, res.payload, sizeof(bana_key));
+        break;
+      // https://github.com/adafruit/Adafruit-PN532/blob/master/examples/readMifare/readMifare.ino
+      case CMD_MIFARE_AUTHENTICATE_AIME:
+      case CMD_MIFARE_AUTHENTICATE_BANA: {
+        sg_res_init(0, 1);
+        uint8_t uid[4];
+        memcpy(uid, req.payload, sizeof(uid));
+        uint8_t* key = req.hdr.cmd == 0x51 ? aime_key : bana_key;
+        if (nfc.mifareclassic_AuthenticateBlock(uid, sizeof(uid), req.payload[4], 1, key)) {
+          sg_res_init();
+        }
+        break;
+      }
+      case CMD_MIFARE_READ_BLOCK: {
+        sg_res_init(0, 1);
+        uint8_t uid[4];
+        uint8_t data[16];
+        memcpy(uid, req.payload, sizeof(uid));
+        if (nfc.mifareclassic_ReadDataBlock(req.payload[4], data)) {
+          sg_res_init(sizeof(data));
+          memcpy(res.payload, data, sizeof(data));
+        }
+        break;
+      }
+
+      // Device control
+      case CMD_TO_UPDATE_MODE: 
+        sg_res_init();
+        break;
+      case CMD_SEND_HEX_DATA:
+        sg_res_init();
+        /* Firmware checksum length? */
+        if (req.payload_len == 0x2b) {
+          /* The firmware is identical flag? */
+          res.status = 0x20;
+        }
+        break;
+      case CMD_RESET:
+        sg_res_init();
+        res.status = 3;
+        draw_blank(0, 32);
+        break;
+
+      // Felica
       case CMD_FELICA_ENCAP: {
         sg_res_init(0, 1);
         uint8_t *payload = &req.payload[8];
         uint8_t resp[256];
         uint8_t resp_len = 0xFF;
         if (payload[0] != req.payload_len - 8) {
-          // FeliCa encap payload length mismatch
+          debugLog("FeliCa encap payload length mismatch", payload[0]);
           break;
         }
         if (nfc.inDataExchange(payload, payload[0], resp, &resp_len)) {
@@ -212,23 +249,6 @@ void loop() {
         }
         break;
       }
-
-      // MIFARE
-      case CMD_MIFARE_SET_KEY_AIME: {
-        sg_res_init();
-        memcpy(aime_key, res.payload, sizeof(aime_key));
-        break;
-      }
-      case CMD_MIFARE_SET_KEY_BANA: {
-        sg_res_init();
-        memcpy(bana_key, res.payload, sizeof(bana_key));
-        break;
-      }
-      case CMD_MIFARE_SELECT_TAG:
-      case CMD_MIFARE_AUTHENTICATE_AIME: // TODO !!! IMPLEMENT THEM LATER
-      case CMD_MIFARE_AUTHENTICATE_BANA: // TODO !!! IMPLEMENT THEM LATER
-        sg_res_init();
-        break;
 
       // LED
       case CMD_RGB_SET_COLOR:
